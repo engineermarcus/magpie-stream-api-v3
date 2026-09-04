@@ -205,6 +205,13 @@ class Handler(BaseHTTPRequestHandler):
         proto = self.headers.get("X-Forwarded-Proto", "http")
         return f"{proto}://{host}"
 
+    def do_HEAD(self):
+        """Satisfy curl -I and browser preflight HEAD checks."""
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+        self.end_headers()
+
     def do_OPTIONS(self):
         """Handle CORS pre-flight requests."""
         self.send_response(200)
