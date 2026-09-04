@@ -239,10 +239,17 @@ class Handler(BaseHTTPRequestHandler):
             self.json(400, {"error": "Missing 'url' parameter"})
             return
 
+        # Get real client IP (magpie forwards it via X-Forwarded-For)
+        client_ip = (
+            self.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+            or self.address_string()
+        )
+
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/125.0.0.0 Safari/537.36",
             "Referer": f"{BASE}/",
-            "Origin": BASE
+            "Origin": BASE,
+            "X-Forwarded-For": client_ip,
         }
 
         # Forward byte range headers if present
