@@ -200,6 +200,11 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         print(f"  {self.address_string()}  {fmt % args}")
 
+    def get_base_url(self):
+        host = self.headers.get("Host", "localhost:8888")
+        proto = self.headers.get("X-Forwarded-Proto", "http")
+        return f"{proto}://{host}"
+
     def do_OPTIONS(self):
         """Handle CORS pre-flight requests."""
         self.send_response(200)
@@ -252,8 +257,7 @@ class Handler(BaseHTTPRequestHandler):
                 content = resp.read().decode("utf-8", errors="ignore")
                 resp.release_conn()
 
-                host_header = self.headers.get("Host", "localhost:8888")
-                proxy_base = f"http://{host_header}/proxy?url="
+                proxy_base = f"{self.get_base_url()}/proxy?url="
 
                 rewritten_lines = []
                 for line in content.splitlines():
@@ -319,7 +323,7 @@ class Handler(BaseHTTPRequestHandler):
             
             if result.get("status") == "ok":
                 raw_url = result["raw_url"]
-                result["url"] = f"http://{host_header}/proxy?url={quote(raw_url, safe='')}"
+                result["url"] = f"{self.get_base_url()}/proxy?url={quote(raw_url, safe='')}"
                 code = 200
             else:
                 code = 502
@@ -339,7 +343,7 @@ class Handler(BaseHTTPRequestHandler):
 
             if result.get("status") == "ok":
                 raw_url = result["raw_url"]
-                result["url"] = f"http://{host_header}/proxy?url={quote(raw_url, safe='')}"
+                result["url"] = f"{self.get_base_url()}/proxy?url={quote(raw_url, safe='')}"
                 code = 200
             else:
                 code = 502
