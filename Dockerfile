@@ -17,8 +17,8 @@ RUN pip install --no-cache-dir \
 
 RUN playwright install chromium --with-deps
 
-COPY stream-api.py .
+COPY app.py .
 
 EXPOSE 8888
 
-CMD ["python3", "stream-api.py", "--host", "0.0.0.0", "--port", "8888"]
+CMD ["python3", "app.py", "--host", "0.0.0.0", "--port", "8888"]
