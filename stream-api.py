@@ -88,7 +88,7 @@ _loop         = None   # the persistent asyncio loop running in bg thread
 
 # ── Resolver ──────────────────────────────────────────────────────────────────
 
-async def resolve(tmdb_id: int, media_type: str, season: int = 1, episode: int = 1) -> dict:
+async def resolve(tmdb_id: int, media_type: str, season: int = 1, episode: int = 1, client_ip: str = None) -> dict:
     global _browser, _stealth
 
     if media_type == "movie":
@@ -108,6 +108,7 @@ async def resolve(tmdb_id: int, media_type: str, season: int = 1, episode: int =
 
     t0 = time.monotonic()
 
+    extra_headers = {"X-Forwarded-For": client_ip} if client_ip else {}
     context = await _browser.new_context(
         viewport={"width": 1280, "height": 720},
         user_agent=(
@@ -116,6 +117,7 @@ async def resolve(tmdb_id: int, media_type: str, season: int = 1, episode: int =
             "Chrome/125.0.0.0 Safari/537.36"
         ),
         ignore_https_errors=True,
+        extra_http_headers=extra_headers,
     )
     await _stealth.apply_stealth_async(context)
 
@@ -224,10 +226,10 @@ async def resolve(tmdb_id: int, media_type: str, season: int = 1, episode: int =
 
     return result
     
-def run_resolve(tmdb_id, media_type, season=1, episode=1):
+def run_resolve(tmdb_id, media_type, season=1, episode=1, client_ip=None):
     """Submit resolve() to the persistent event loop; block until done."""
     future: Future = asyncio.run_coroutine_threadsafe(
-        resolve(tmdb_id, media_type, season, episode),
+        resolve(tmdb_id, media_type, season, episode, client_ip),
         _loop,
     )
     return future.result(timeout=RESOLVE_TIMEOUT + 10)
@@ -359,10 +361,11 @@ class Handler(BaseHTTPRequestHandler):
 
         m = ROUTE_MOVIE.match(path)
         if m:
-            tmdb_id = int(m.group(1))
+            tmdb_id   = int(m.group(1))
+            client_ip = self.headers.get("X-Forwarded-For", "").split(",")[0].strip() or self.address_string()
             print(f"  resolving movie tmdb={tmdb_id} ...")
             t0     = time.monotonic()
-            result = run_resolve(tmdb_id, "movie")
+            result = run_resolve(tmdb_id, "movie", client_ip=client_ip)
             result["elapsed_ms"] = int((time.monotonic() - t0) * 1000)
 
             if result.get("status") == "ok":
@@ -376,12 +379,13 @@ class Handler(BaseHTTPRequestHandler):
 
         m = ROUTE_TV.match(path)
         if m:
-            tmdb_id = int(m.group(1))
-            season  = int(m.group(2))
-            episode = int(m.group(3))
+            tmdb_id   = int(m.group(1))
+            season    = int(m.group(2))
+            episode   = int(m.group(3))
+            client_ip = self.headers.get("X-Forwarded-For", "").split(",")[0].strip() or self.address_string()
             print(f"  resolving tv tmdb={tmdb_id} s{season}e{episode} ...")
             t0     = time.monotonic()
-            result = run_resolve(tmdb_id, "tv", season, episode)
+            result = run_resolve(tmdb_id, "tv", season, episode, client_ip=client_ip)
             result["elapsed_ms"] = int((time.monotonic() - t0) * 1000)
 
             if result.get("status") == "ok":
