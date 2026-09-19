@@ -3,44 +3,23 @@ name: stream-worker
 on:
   workflow_dispatch:
     inputs:
-      job_id:
-        required: true
-      tmdb_id:
-        required: true
-      media_type:
-        required: true
-      season:
-        default: "1"
-      episode:
-        default: "1"
       callback_url:
         required: true
 
 jobs:
   stream:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 115
     permissions:
       packages: read
     steps:
       - name: Login to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      - name: Pull image
-        run: docker pull ghcr.io/${{ github.repository_owner }}/stream:latest
-
-      - name: Resolve and callback
-        env:
-          JOB_ID: ${{ inputs.job_id }}
-          TMDB_ID: ${{ inputs.tmdb_id }}
-          MEDIA_TYPE: ${{ inputs.media_type }}
-          SEASON: ${{ inputs.season }}
-          EPISODE: ${{ inputs.episode }}
-          CALLBACK_URL: ${{ inputs.callback_url }}
+      - name: Pull and start server
         run: |
-          docker run -d --name stream \
-            --shm-size=1g \
-            -p 8888:8888 \
+          docker pull ghcr.io/${{ github.repository_owner }}/stream:latest
+          docker run -d --name stream --shm-size=1g -p 8888:8888 \
             ghcr.io/${{ github.repository_owner }}/stream:latest
 
           for i in $(seq 1 30); do
@@ -48,14 +27,27 @@ jobs:
             sleep 1
           done
 
-          if [ "$MEDIA_TYPE" = "movie" ]; then
-            RESULT=$(curl -s -m 120 "http://localhost:8888/stream/movie/$TMDB_ID")
-          else
-            RESULT=$(curl -s -m 120 "http://localhost:8888/stream/tv/$TMDB_ID/$SEASON/$EPISODE")
-          fi
+      - name: Start tunnel and register
+        env:
+          CALLBACK_URL: ${{ inputs.callback_url }}
+        run: |
+          curl -sL -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared
+          nohup ./cloudflared tunnel --no-autoupdate --url http://localhost:8888 > tunnel.log 2>&1 &
 
-          echo "result: $RESULT"
+          TUNNEL_URL=""
+          for i in $(seq 1 30); do
+            TUNNEL_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' tunnel.log | head -1)
+            [ -n "$TUNNEL_URL" ] && break
+            sleep 1
+          done
 
-          curl -s -X POST "$CALLBACK_URL/callback/$JOB_ID" \
+          echo "tunnel: $TUNNEL_URL"
+
+          # Register with dispatch server
+          curl -s -X POST "$CALLBACK_URL/register" \
             -H "Content-Type: application/json" \
-            -d "{\"stream\": $RESULT}"
+            -d "{\"tunnel_url\": \"$TUNNEL_URL\"}"
+
+          # Stay alive for 1h50m then die (workflow limit is ~2hrs)
+          sleep 6600
