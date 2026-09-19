@@ -2,23 +2,16 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y \
-    wget curl gnupg ca-certificates \
-    fonts-liberation libglib2.0-0 libnss3 libatk1.0-0 \
-    libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 \
-    libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
-    libgbm1 libasound2 libpango-1.0-0 libcairo2 \
-    --no-install-recommends && rm -rf /var/lib/apt/lists/*
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-RUN pip install --no-cache-dir \
-    playwright \
-    playwright-stealth \
-    urllib3
-
-RUN playwright install chromium --with-deps
+RUN pip install playwright playwright-stealth urllib3 --no-cache-dir && \
+    python3 -m playwright install chromium && \
+    python3 -m playwright install-deps chromium && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /root/.cache/pip
 
 COPY app.py .
 
 EXPOSE 8888
 
-CMD ["python3", "app.py", "--host", "0.0.0.0", "--port", "8888"]
+CMD ["python3", "app.py"]
