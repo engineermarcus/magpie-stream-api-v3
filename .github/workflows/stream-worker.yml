@@ -51,7 +51,7 @@ jobs:
           curl -sL -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x cloudflared
 
-      - name: Start tunnel and callback
+      - name: Resolve and callback
         env:
           JOB_ID: ${{ inputs.job_id }}
           TMDB_ID: ${{ inputs.tmdb_id }}
@@ -60,40 +60,14 @@ jobs:
           EPISODE: ${{ inputs.episode }}
           CALLBACK_URL: ${{ inputs.callback_url }}
         run: |
-          nohup ./cloudflared tunnel --no-autoupdate --url http://localhost:8888 > tunnel.log 2>&1 &
-
-          # wait up to 30s for tunnel URL
-          TUNNEL_URL=""
-          for i in $(seq 1 30); do
-            TUNNEL_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' tunnel.log | head -1)
-            [ -n "$TUNNEL_URL" ] && break
-            sleep 1
-          done
-
-          if [ -z "$TUNNEL_URL" ]; then
-            echo "tunnel failed to start"
-            cat tunnel.log
-            exit 1
-          fi
-
-          echo "tunnel: $TUNNEL_URL"
-
-          # wait for tunnel to be reachable
-          for i in $(seq 1 15); do
-            curl -s -m 5 "$TUNNEL_URL/health" >/dev/null && break
-            sleep 2
-          done
-
           if [ "$MEDIA_TYPE" = "movie" ]; then
-            RESULT=$(curl -s -m 120 "$TUNNEL_URL/stream/movie/$TMDB_ID")
+            RESULT=$(curl -s -m 120 "http://localhost:8888/stream/movie/$TMDB_ID")
           else
-            RESULT=$(curl -s -m 120 "$TUNNEL_URL/stream/tv/$TMDB_ID/$SEASON/$EPISODE")
+            RESULT=$(curl -s -m 120 "http://localhost:8888/stream/tv/$TMDB_ID/$SEASON/$EPISODE")
           fi
 
           echo "result: $RESULT"
 
           curl -s -X POST "$CALLBACK_URL/callback/$JOB_ID" \
             -H "Content-Type: application/json" \
-            -d "{\"tunnel_url\": \"$TUNNEL_URL\", \"stream\": $RESULT}"
-
-          sleep 10800
+            -d "{\"stream\": $RESULT}"
