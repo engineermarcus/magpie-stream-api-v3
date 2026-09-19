@@ -36,7 +36,7 @@ except ImportError:
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-BASE            = "https://cinejoy.to"
+BASE            = "https://cinejoy.pk"
 STREAM_EXTS     = (".m3u8", ".mp4", ".mpd")
 RESOLVE_TIMEOUT = 35   # seconds
 
