@@ -58,7 +58,7 @@ import threading
 
 _cache: dict = {}           # key -> {result, expires}
 _cache_lock = threading.Lock()
-CACHE_TTL = 60              # 1 minute
+CACHE_TTL = 0               # disabled
 
 def cache_key(tmdb_id, media_type, season=1, episode=1):
     if media_type == "movie":
