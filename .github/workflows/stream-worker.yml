@@ -56,5 +56,5 @@ jobs:
           END=$((SECONDS + 6600))
           while [ $SECONDS -lt $END ]; do
             curl -s -X POST "$CALLBACK_URL/heartbeat"               -H "Content-Type: application/json"               -d "{"runner_id": "$RUNNER_ID"}" >/dev/null
-            sleep 30
+            sleep 5
           done
