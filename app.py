@@ -58,7 +58,7 @@ import threading
 
 _cache: dict = {}           # key -> {result, expires}
 _cache_lock = threading.Lock()
-CACHE_TTL = 1800            # 30 minutes
+CACHE_TTL = 0               # disabled
 
 def cache_key(tmdb_id, media_type, season=1, episode=1):
     if media_type == "movie":
@@ -248,7 +248,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def get_base_url(self):
         host  = self.headers.get("Host", "localhost:8888")
-        proto = self.headers.get("X-Forwarded-Proto", "http")
+        proto = self.headers.get("X-Forwarded-Proto", "https")
         return f"{proto}://{host}"
 
     def do_HEAD(self):
