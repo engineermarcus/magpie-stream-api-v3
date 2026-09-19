@@ -23,6 +23,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Cache pip deps
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/lib
+          key: stream-deps-v1
+
+      - name: Cache playwright chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-v1
+
       - name: Install deps
         run: |
           pip install playwright playwright-stealth urllib3 --break-system-packages
@@ -49,10 +61,28 @@ jobs:
           CALLBACK_URL: ${{ inputs.callback_url }}
         run: |
           nohup ./cloudflared tunnel --no-autoupdate --url http://localhost:8888 > tunnel.log 2>&1 &
-          sleep 8
 
-          TUNNEL_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' tunnel.log | head -1)
+          # wait up to 30s for tunnel URL
+          TUNNEL_URL=""
+          for i in $(seq 1 30); do
+            TUNNEL_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' tunnel.log | head -1)
+            [ -n "$TUNNEL_URL" ] && break
+            sleep 1
+          done
+
+          if [ -z "$TUNNEL_URL" ]; then
+            echo "tunnel failed to start"
+            cat tunnel.log
+            exit 1
+          fi
+
           echo "tunnel: $TUNNEL_URL"
+
+          # wait for tunnel to be reachable
+          for i in $(seq 1 15); do
+            curl -s -m 5 "$TUNNEL_URL/health" >/dev/null && break
+            sleep 2
+          done
 
           if [ "$MEDIA_TYPE" = "movie" ]; then
             RESULT=$(curl -s -m 120 "$TUNNEL_URL/stream/movie/$TMDB_ID")
