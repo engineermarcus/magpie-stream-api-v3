@@ -36,25 +36,31 @@ jobs:
           nohup ./cloudflared tunnel --no-autoupdate --url http://localhost:8888 > tunnel.log 2>&1 &
 
           TUNNEL_URL=""
-          for i in $(seq 1 30); do
+          for i in $(seq 1 60); do
             TUNNEL_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' tunnel.log | head -1)
             [ -n "$TUNNEL_URL" ] && break
             sleep 1
           done
 
+          if [ -z "$TUNNEL_URL" ]; then
+            echo "ERROR: tunnel never started"
+            cat tunnel.log
+            exit 1
+          fi
+
           echo "tunnel: $TUNNEL_URL"
 
-          # Register with dispatch server
           REGISTER=$(curl -s -X POST "$CALLBACK_URL/register" \
             -H "Content-Type: application/json" \
             -d "{\"tunnel_url\": \"$TUNNEL_URL\"}")
           echo "register response: $REGISTER"
           RUNNER_ID=$(echo "$REGISTER" | python3 -c "import sys,json; print(json.load(sys.stdin)['runner_id'])")
-          echo "runner_id: $RUNNER_ID" 
+          echo "runner_id: $RUNNER_ID"
 
-          # Send heartbeat every 30s, stay alive for 1h50m
           END=$((SECONDS + 6600))
           while [ $SECONDS -lt $END ]; do
-            curl -s -X POST "$CALLBACK_URL/heartbeat"               -H "Content-Type: application/json"               -d "{"runner_id": "$RUNNER_ID"}" >/dev/null
-            sleep 5
+            curl -s -X POST "$CALLBACK_URL/heartbeat" \
+              -H "Content-Type: application/json" \
+              -d "{\"runner_id\": \"$RUNNER_ID\"}" >/dev/null
+            sleep 30
           done
