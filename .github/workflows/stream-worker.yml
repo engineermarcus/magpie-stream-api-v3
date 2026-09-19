@@ -96,4 +96,4 @@ jobs:
             -H "Content-Type: application/json" \
             -d "{\"tunnel_url\": \"$TUNNEL_URL\", \"stream\": $RESULT}"
 
-          sleep 1500
+          sleep 10800
