@@ -45,10 +45,12 @@ jobs:
           echo "tunnel: $TUNNEL_URL"
 
           # Register with dispatch server
-          RUNNER_ID=$(curl -s -X POST "$CALLBACK_URL/register" \
+          REGISTER=$(curl -s -X POST "$CALLBACK_URL/register" \
             -H "Content-Type: application/json" \
-            -d "{"tunnel_url": "$TUNNEL_URL"}" | python3 -c "import sys,json; print(json.load(sys.stdin)['runner_id'])")
-          echo "runner_id: $RUNNER_ID"
+            -d "{\"tunnel_url\": \"$TUNNEL_URL\"}")
+          echo "register response: $REGISTER"
+          RUNNER_ID=$(echo "$REGISTER" | python3 -c "import sys,json; print(json.load(sys.stdin)['runner_id'])")
+          echo "runner_id: $RUNNER_ID" 
 
           # Send heartbeat every 30s, stay alive for 1h50m
           END=$((SECONDS + 6600))
