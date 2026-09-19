@@ -29,6 +29,21 @@ jobs:
       - name: Pull image
         run: docker pull ghcr.io/${{ github.repository_owner }}/stream:latest
 
+      - name: Start container
+        run: |
+          docker run -d --name stream \
+            --shm-size=1g \
+            -p 8888:8888 \
+            ghcr.io/${{ github.repository_owner }}/stream:latest
+
+          for i in $(seq 1 30); do
+            curl -s localhost:8888/health >/dev/null && echo "ready" && break
+            echo "waiting... $i"
+            sleep 2
+          done
+
+          docker logs stream
+
       - name: Resolve and callback
         env:
           JOB_ID: ${{ inputs.job_id }}
@@ -38,16 +53,6 @@ jobs:
           EPISODE: ${{ inputs.episode }}
           CALLBACK_URL: ${{ inputs.callback_url }}
         run: |
-          docker run -d --name stream \
-            --shm-size=1g \
-            -p 8888:8888 \
-            ghcr.io/${{ github.repository_owner }}/stream:latest
-
-          for i in $(seq 1 30); do
-            curl -s localhost:8888/health >/dev/null && break
-            sleep 1
-          done
-
           if [ "$MEDIA_TYPE" = "movie" ]; then
             RESULT=$(curl -s -m 120 "http://localhost:8888/stream/movie/$TMDB_ID")
           else
