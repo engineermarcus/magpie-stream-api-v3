@@ -1,0 +1,73 @@
+name: stream-worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        required: true
+      tmdb_id:
+        required: true
+      media_type:
+        required: true
+      season:
+        default: "1"
+      episode:
+        default: "1"
+      callback_url:
+        required: true
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache pip deps
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/lib
+          key: stream-deps-v1
+
+      - name: Cache playwright chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-v1
+
+      - name: Install deps
+        run: |
+          pip install playwright playwright-stealth urllib3 --break-system-packages
+          python3 -m playwright install chromium
+          python3 -m playwright install-deps chromium
+
+      - name: Start server
+        run: |
+          python3 app.py &
+          for i in $(seq 1 30); do curl -s localhost:8888/health >/dev/null && break; sleep 2; done
+
+      - name: Install cloudflared
+        run: |
+          curl -sL -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared
+
+      - name: Resolve and callback
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+          TMDB_ID: ${{ inputs.tmdb_id }}
+          MEDIA_TYPE: ${{ inputs.media_type }}
+          SEASON: ${{ inputs.season }}
+          EPISODE: ${{ inputs.episode }}
+          CALLBACK_URL: ${{ inputs.callback_url }}
+        run: |
+          if [ "$MEDIA_TYPE" = "movie" ]; then
+            RESULT=$(curl -s -m 120 "http://localhost:8888/stream/movie/$TMDB_ID")
+          else
+            RESULT=$(curl -s -m 120 "http://localhost:8888/stream/tv/$TMDB_ID/$SEASON/$EPISODE")
+          fi
+
+          echo "result: $RESULT"
+
+          curl -s -X POST "$CALLBACK_URL/callback/$JOB_ID" \
+            -H "Content-Type: application/json" \
+            -d "{\"stream\": $RESULT}"
