@@ -45,9 +45,14 @@ jobs:
           echo "tunnel: $TUNNEL_URL"
 
           # Register with dispatch server
-          curl -s -X POST "$CALLBACK_URL/register" \
+          RUNNER_ID=$(curl -s -X POST "$CALLBACK_URL/register" \
             -H "Content-Type: application/json" \
-            -d "{\"tunnel_url\": \"$TUNNEL_URL\"}"
+            -d "{"tunnel_url": "$TUNNEL_URL"}" | python3 -c "import sys,json; print(json.load(sys.stdin)['runner_id'])")
+          echo "runner_id: $RUNNER_ID"
 
-          # Stay alive for 1h50m then die (workflow limit is ~2hrs)
-          sleep 6600
+          # Send heartbeat every 30s, stay alive for 1h50m
+          END=$((SECONDS + 6600))
+          while [ $SECONDS -lt $END ]; do
+            curl -s -X POST "$CALLBACK_URL/heartbeat"               -H "Content-Type: application/json"               -d "{"runner_id": "$RUNNER_ID"}" >/dev/null
+            sleep 30
+          done
