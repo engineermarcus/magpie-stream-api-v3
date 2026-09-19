@@ -1,0 +1,69 @@
+name: stream-worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        required: true
+      tmdb_id:
+        required: true
+      media_type:
+        required: true
+      season:
+        default: "1"
+      episode:
+        default: "1"
+      callback_url:
+        required: true
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps
+        run: |
+          pip install playwright playwright-stealth urllib3 --break-system-packages
+          python3 -m playwright install chromium
+          python3 -m playwright install-deps chromium
+
+      - name: Start server
+        run: |
+          python3 app.py &
+          for i in $(seq 1 30); do curl -s localhost:8888/health >/dev/null && break; sleep 2; done
+
+      - name: Install cloudflared
+        run: |
+          curl -sL -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared
+
+      - name: Start tunnel and callback
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+          TMDB_ID: ${{ inputs.tmdb_id }}
+          MEDIA_TYPE: ${{ inputs.media_type }}
+          SEASON: ${{ inputs.season }}
+          EPISODE: ${{ inputs.episode }}
+          CALLBACK_URL: ${{ inputs.callback_url }}
+        run: |
+          nohup ./cloudflared tunnel --no-autoupdate --url http://localhost:8888 > tunnel.log 2>&1 &
+          sleep 8
+
+          TUNNEL_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' tunnel.log | head -1)
+          echo "tunnel: $TUNNEL_URL"
+
+          if [ "$MEDIA_TYPE" = "movie" ]; then
+            RESULT=$(curl -s -m 120 "$TUNNEL_URL/stream/movie/$TMDB_ID")
+          else
+            RESULT=$(curl -s -m 120 "$TUNNEL_URL/stream/tv/$TMDB_ID/$SEASON/$EPISODE")
+          fi
+
+          echo "result: $RESULT"
+
+          curl -s -X POST "$CALLBACK_URL/callback/$JOB_ID" \
+            -H "Content-Type: application/json" \
+            -d "{\"tunnel_url\": \"$TUNNEL_URL\", \"stream\": $RESULT}"
+
+          sleep 1500
