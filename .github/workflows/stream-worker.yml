@@ -61,6 +61,8 @@ jobs:
 
           echo "result: $RESULT"
 
+          echo "=== docker logs ==="
+          docker logs stream
           curl -s -X POST "$CALLBACK_URL/job" \
             -H "Content-Type: application/json" \
             -d "{\"job_id\": \"$JOB_ID\", \"result\": $RESULT}"
