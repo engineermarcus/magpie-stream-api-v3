@@ -40,12 +40,16 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-v1
 
-      - name: Install deps
-        if: steps.cache-pip.outputs.cache-hit != 'true' || steps.cache-chromium.outputs.cache-hit != 'true'
-        run: |
-          pip install playwright playwright-stealth urllib3 httpx --quiet
-          python3 -m playwright install chromium
-          python3 -m playwright install-deps chromium
+      - name: Install pip deps
+        if: steps.cache-pip.outputs.cache-hit != 'true'
+        run: pip install playwright playwright-stealth urllib3 httpx --quiet
+
+      - name: Install chromium
+        if: steps.cache-chromium.outputs.cache-hit != 'true'
+        run: python3 -m playwright install chromium
+
+      - name: Install system deps
+        run: python3 -m playwright install-deps chromium
 
       - name: Start server
         run: |
