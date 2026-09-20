@@ -137,9 +137,32 @@ async def resolve(tmdb_id: int, media_type: str, season: int = 1, episode: int =
 
     await context.route("**/*", handle_route)
 
+    # Hook fetch + XHR inside the page to catch MSE/blob stream sources
+    await context.add_init_script("""
+        window.__stream_urls__ = [];
+        const _push = (u) => {
+            if (!u || typeof u !== 'string') return;
+            if (/[.]m3u8|[.]mp4|[.]mpd/.test(u) && !u.startsWith('blob:')) {
+                if (!window.__stream_urls__.includes(u)) window.__stream_urls__.push(u);
+            }
+        };
+        const _fetch = window.fetch;
+        window.fetch = function(...a) {
+            _push(typeof a[0] === 'string' ? a[0] : a[0]?.url);
+            return _fetch.apply(this, a);
+        };
+        const _open = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function(m, u, ...r) {
+            _push(u);
+            return _open.apply(this, [m, u, ...r]);
+        };
+    """)
+
     def on_request(req):
         u = req.url
         parsed_path = urlparse(u).path
+        if re.search(r'/(init|seg|chunk|segment)[_\-]?\d*\.(mp4|m4s|ts)$', parsed_path, re.I):
+            return
         if any(parsed_path.endswith(ext) for ext in STREAM_EXTS):
             print(f"  [t+{time.monotonic()-t0:.2f}s] stream intercepted: {u}")
             if u not in stream_urls:
@@ -149,6 +172,7 @@ async def resolve(tmdb_id: int, media_type: str, season: int = 1, episode: int =
     page = await context.new_page()
     page.on("request", on_request)
 
+    print(f"  [debug] navigating to {page_url}")
     try:
         await page.goto(
             page_url,
@@ -174,6 +198,7 @@ async def resolve(tmdb_id: int, media_type: str, season: int = 1, episode: int =
         '[class*="player"] button', '.vjs-big-play-button',
         '[data-testid*="play"]',
     ]
+    print(f"  [debug] page loaded t+{time.monotonic()-t0:.2f}s, clicking...")
     clicked = False
     for sel in play_selectors:
         try:
@@ -196,59 +221,105 @@ async def resolve(tmdb_id: int, media_type: str, season: int = 1, episode: int =
         except Exception:
             pass
 
-
     async def is_fake(url: str) -> bool:
         try:
             import httpx as _httpx
-            async with _httpx.AsyncClient(timeout=10) as c:
-                r = await c.get(url, headers={"Referer": f"{BASE}/"})
+            base_url = url.rsplit("/", 1)[0] + "/"
+            cookies = {c["name"]: c["value"] for c in await context.cookies()}
+            hdrs = {
+                "Referer": f"{BASE}/",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+                "Origin": BASE,
+            }
+            async with _httpx.AsyncClient(timeout=10, follow_redirects=True) as c:
+                r = await c.get(url, headers=hdrs, cookies=cookies)
+                print(f"  [is_fake] status={r.status_code} url={url}")
                 if r.status_code != 200:
                     return True
+                # If it ends in .m3u8 and is valid, it is always real — stop here
+                if url.endswith(".m3u8") and r.text.strip().startswith("#EXTM3U"):
+                    return False
+                # Verify it is actually an m3u8 file before doing anything else
+                if not r.text.strip().startswith("#EXTM3U"):
+                    print(f"  [is_fake] not an m3u8 (got actual image or junk) — FAKE")
+                    return True
+                image_exts = (".jpg", ".jpeg", ".png", ".webp")
+                # segment pattern: playlist_000.jpg, seg_001.png, chunk_002.jpeg etc
+                seg_pattern = re.compile(r'(playlist|seg|chunk|segment)[_\-]\d+\.(jpg|jpeg|png|webp)$', re.I)
+                has_image_segments = False
+                has_real_sub = False
                 for line in r.text.splitlines():
                     line = line.strip()
-                    if line and not line.startswith("#"):
-                        if any(line.endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".webp")):
-                            return True
-                return False
-        except Exception:
+                    if not line or line.startswith("#"):
+                        continue
+                    if any(line.endswith(ext) for ext in image_exts):
+                        if seg_pattern.search(line):
+                            # numbered segment disguised as image — this IS a real playlist
+                            has_image_segments = True
+                            continue
+                        # non-numbered image line — probe as possible sub-playlist
+                        sub_url = urljoin(base_url, line)
+                        print(f"  [is_fake] probing disguised: {sub_url}")
+                        try:
+                            sr = await c.get(sub_url, headers=hdrs, cookies=cookies)
+                            if sr.status_code == 200 and "#EXTM3U" in sr.text:
+                                print(f"  [is_fake] real sub-playlist found: {sub_url}")
+                                if sub_url not in stream_urls:
+                                    if "1080p" in sub_url:
+                                        stream_urls.append(sub_url)  # end = reversed() picks first
+                                    else:
+                                        stream_urls.insert(0, sub_url)  # start = lower priority
+                                    found.set()
+                                has_real_sub = True
+                        except Exception as ex:
+                            print(f"  [is_fake] sub-probe failed: {ex}")
+                # real if it has disguised segments OR we found sub-playlists (master is fake but subs are real)
+                if has_image_segments:
+                    print(f"  [is_fake] disguised-segment playlist — treating as REAL")
+                    return False
+                return has_real_sub  # fake master that yielded subs → mark fake so we pick a sub next
+        except Exception as e:
+            print(f"  [is_fake] exception: {e}")
             return True
 
     server_selectors = [
-        '[class*="server"]',
-        '[class*="Server"]',
-        '[class*="source"]',
-        '[class*="Source"]',
-        'ul[class*="list"] li',
-        '[class*="provider"] li',
+        '[class*="server"]', '[class*="Server"]',
+        '[class*="source"]', '[class*="Source"]',
+        'ul[class*="list"] li', '[class*="provider"] li',
         '[class*="btn-server"]',
     ]
 
+    print(f"  [debug] stream_urls so far: {stream_urls}")
     best = None
     tried_urls = set()
     max_attempts = 5
+    wait_timeout = RESOLVE_TIMEOUT * 1.5 if media_type == "tv" else RESOLVE_TIMEOUT * 0.85
 
     for attempt in range(max_attempts):
-        candidate = next((u for u in reversed(stream_urls) if u not in tried_urls), None)
+        def ok(u):
+            if u in tried_urls: return False
+            return not re.search(r"/(init|seg|chunk|segment)[_\-]?\d*\.(mp4|m4s|ts)$", urlparse(u).path, re.I)
+        candidate = next((u for u in reversed(stream_urls) if ok(u)), None)
         if not candidate:
+            print(f"  [debug] no candidate yet, waiting up to {wait_timeout:.1f}s...")
             found.clear()
-            wait_timeout = RESOLVE_TIMEOUT * 1.5 if media_type == "tv" else RESOLVE_TIMEOUT * 0.85
             try:
                 await asyncio.wait_for(found.wait(), timeout=wait_timeout)
             except asyncio.TimeoutError:
                 break
-            candidate = next((u for u in reversed(stream_urls) if u not in tried_urls), None)
+            candidate = next((u for u in reversed(stream_urls) if ok(u)), None)
         if not candidate:
             break
-        tried_urls.add(candidate)
 
+        tried_urls.add(candidate)
         print(f"  [attempt {attempt+1}] validating: {candidate}")
+
         if not await is_fake(candidate):
             best = candidate
             print(f"  [attempt {attempt+1}] real stream found")
             break
 
-        print(f"  [attempt {attempt+1}] fake stream, trying next server...")
-
+        print(f"  [attempt {attempt+1}] fake — trying next server...")
         switched = False
         for sel in server_selectors:
             try:
@@ -263,9 +334,31 @@ async def resolve(tmdb_id: int, media_type: str, season: int = 1, episode: int =
                     break
             except Exception:
                 pass
-
         if not switched:
-            break
+            # Pull any URLs caught by the JS hook
+            try:
+                js_urls = await page.evaluate("window.__stream_urls__ || []")
+                print(f"  [js-hook] urls seen by fetch/XHR: {js_urls}")
+                for u in js_urls:
+                    if u not in stream_urls:
+                        stream_urls.append(u)
+                        found.set()
+            except Exception as e:
+                print(f"  [js-hook] failed: {e}")
+
+            # Dump full page body to find settings/server buttons
+            try:
+                html = await page.evaluate("""
+                    (() => {
+                        // find settings button area
+                        const candidates = [...document.querySelectorAll('button, [class*="setting"], [class*="server"], [class*="gear"]')];
+                        return candidates.map(el => el.outerHTML).join('\n').slice(0, 3000);
+                    })()
+                """)
+                print(f"  [DOM-buttons] {html}")
+            except Exception as e:
+                print(f"  [DOM] failed: {e}")
+            await asyncio.sleep(3)
 
     await page.evaluate("window.stop()")
     await context.close()
@@ -283,6 +376,7 @@ async def resolve(tmdb_id: int, media_type: str, season: int = 1, episode: int =
         **({"season": season, "episode": episode} if media_type == "tv" else {}),
     }
     cache_set(ck, result)
+
     return result
     
 def run_resolve(tmdb_id, media_type, season=1, episode=1, client_ip=None):
@@ -291,7 +385,7 @@ def run_resolve(tmdb_id, media_type, season=1, episode=1, client_ip=None):
         resolve(tmdb_id, media_type, season, episode, client_ip),
         _loop,
     )
-    return future.result(timeout=RESOLVE_TIMEOUT + 10)
+    return future.result(timeout=RESOLVE_TIMEOUT * 2 + 20)
 
 
 # ── HTTP handler ──────────────────────────────────────────────────────────────
@@ -363,11 +457,14 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Headers", "*")
 
             content_type = resp.headers.get("Content-Type", "application/octet-stream")
-            self.send_header("Content-Type", content_type)
 
-            if ".m3u8" in target_url or "mpegurl" in content_type:
-                content = resp.read().decode("utf-8", errors="ignore")
-                resp.release_conn()
+            # detect disguised m3u8 (e.g. playlist.jpg that is actually m3u8)
+            raw_content = resp.read()
+            resp.release_conn()
+            is_m3u8 = ".m3u8" in target_url or "mpegurl" in content_type or raw_content.lstrip()[:7] == b"#EXTM3U"
+            if is_m3u8:
+                self.send_header("Content-Type", "application/vnd.apple.mpegurl")
+                content = raw_content.decode("utf-8", errors="ignore")
 
                 proxy_base      = f"{self.get_base_url()}/proxy?url="
                 rewritten_lines = []
@@ -391,14 +488,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(body)
             else:
-                if "Content-Length" in resp.headers:
-                    self.send_header("Content-Length", resp.headers["Content-Length"])
-                if "Content-Range" in resp.headers:
-                    self.send_header("Content-Range", resp.headers["Content-Range"])
+                self.send_header("Content-Length", str(len(raw_content)))
                 self.end_headers()
-                for chunk in resp.stream(32768):
-                    self.wfile.write(chunk)
-                resp.release_conn()
+                self.wfile.write(raw_content)
 
         except Exception as e:
             self.json(500, {"error": f"Proxy request failed: {str(e)}"})
