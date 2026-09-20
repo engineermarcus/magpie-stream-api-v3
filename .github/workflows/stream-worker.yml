@@ -26,13 +26,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Cache deps
+      - name: Cache pip
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/pip
-            ~/.cache/ms-playwright
-          key: stream-deps-v1
+          path: ~/.cache/pip
+          key: stream-pip-v1
+
+      - name: Cache chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-v1
 
       - name: Install deps
         run: |
