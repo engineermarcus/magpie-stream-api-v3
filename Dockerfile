@@ -14,4 +14,4 @@ COPY app.py .
 
 EXPOSE 8888
 
-CMD ["python3", "app.py"]
+CMD ["python3", "-u", "app.py"]
