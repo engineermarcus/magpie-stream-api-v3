@@ -4,7 +4,7 @@ WORKDIR /app
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-RUN pip install playwright playwright-stealth urllib3 --no-cache-dir && \
+RUN pip install playwright playwright-stealth urllib3 httpx --no-cache-dir && \
     python3 -m playwright install chromium && \
     python3 -m playwright install-deps chromium && \
     apt-get clean && \
