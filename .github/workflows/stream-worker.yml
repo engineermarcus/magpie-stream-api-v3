@@ -5,23 +5,11 @@ on:
     inputs:
       callback_url:
         required: true
-      job_id:
-        required: true
-      tmdb_id:
-        required: true
-      media_type:
-        required: true
-      season:
-        required: false
-        default: "1"
-      episode:
-        required: false
-        default: "1"
 
 jobs:
   stream:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 100
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -52,24 +40,49 @@ jobs:
             curl -s localhost:8888/health >/dev/null && break
             sleep 1
           done
+          echo "server ready"
 
-      - name: Resolve and report
+      - name: Poll and resolve
         env:
           CALLBACK_URL: ${{ inputs.callback_url }}
-          JOB_ID: ${{ inputs.job_id }}
-          TMDB_ID: ${{ inputs.tmdb_id }}
-          MEDIA_TYPE: ${{ inputs.media_type }}
-          SEASON: ${{ inputs.season }}
-          EPISODE: ${{ inputs.episode }}
         run: |
-          if [ "$MEDIA_TYPE" = "movie" ]; then
-            RESULT=$(curl -s localhost:8888/stream/movie/$TMDB_ID)
-          else
-            RESULT=$(curl -s localhost:8888/stream/tv/$TMDB_ID/$SEASON/$EPISODE)
-          fi
+          echo "runner started, polling for jobs..."
+          END=$((SECONDS + 6600))
+          while [ $SECONDS -lt $END ]; do
+            RESPONSE=$(curl -s --max-time 25 "$CALLBACK_URL/poll" || true)
+            JOB=$(echo "$RESPONSE" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    j = d.get('job')
+    print(json.dumps(j) if j else '')
+except:
+    print('')
+" 2>/dev/null)
 
-          echo "result: $RESULT"
+            if [ -z "$JOB" ]; then
+              continue
+            fi
 
-          curl -s -X POST "$CALLBACK_URL/job" \
-            -H "Content-Type: application/json" \
-            -d "{\"job_id\": \"$JOB_ID\", \"result\": $RESULT}"
+            JOB_ID=$(echo "$JOB" | python3 -c "import sys,json; print(json.load(sys.stdin)['job_id'])")
+            TMDB_ID=$(echo "$JOB" | python3 -c "import sys,json; print(json.load(sys.stdin)['tmdb_id'])")
+            MEDIA_TYPE=$(echo "$JOB" | python3 -c "import sys,json; print(json.load(sys.stdin)['type'])")
+            SEASON=$(echo "$JOB" | python3 -c "import sys,json; print(json.load(sys.stdin).get('season',1))")
+            EPISODE=$(echo "$JOB" | python3 -c "import sys,json; print(json.load(sys.stdin).get('episode',1))")
+
+            echo "got job $JOB_ID tmdb=$TMDB_ID type=$MEDIA_TYPE"
+
+            if [ "$MEDIA_TYPE" = "movie" ]; then
+              RESULT=$(curl -s --max-time 90 localhost:8888/stream/movie/$TMDB_ID)
+            else
+              RESULT=$(curl -s --max-time 90 localhost:8888/stream/tv/$TMDB_ID/$SEASON/$EPISODE)
+            fi
+
+            echo "result: $RESULT"
+
+            curl -s -X POST "$CALLBACK_URL/job" \
+              -H "Content-Type: application/json" \
+              -d "{\"job_id\": \"$JOB_ID\", \"result\": $RESULT}"
+
+            echo "job $JOB_ID done"
+          done
