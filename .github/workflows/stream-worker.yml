@@ -55,11 +55,12 @@ jobs:
 
           # verify tunnel is actually working
           for i in $(seq 1 30); do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$TUNNEL_URL/health")
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$TUNNEL_URL/health" 2>/dev/null || echo "000")
             [ "$STATUS" = "200" ] && break
             echo "tunnel not ready yet ($STATUS), waiting..."
             sleep 3
           done
+          echo "tunnel check done, status=$STATUS"
 
           REGISTER=$(curl -s -X POST "$CALLBACK_URL/register" \
             -H "Content-Type: application/json" \
