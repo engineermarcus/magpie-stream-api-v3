@@ -5,11 +5,23 @@ on:
     inputs:
       callback_url:
         required: true
+      job_id:
+        required: true
+      tmdb_id:
+        required: true
+      media_type:
+        required: true
+      season:
+        required: false
+        default: "1"
+      episode:
+        required: false
+        default: "1"
 
 jobs:
   stream:
     runs-on: ubuntu-latest
-    timeout-minutes: 115
+    timeout-minutes: 10
     permissions:
       packages: read
     steps:
@@ -26,55 +38,24 @@ jobs:
             curl -s localhost:8888/health >/dev/null && break
             sleep 1
           done
-          echo '=== docker logs ==='
-          echo '=== timing stream resolve ==='
-          time curl -s localhost:8888/stream/movie/969681 | python3 -m json.tool
-          docker logs stream
-          curl -s localhost:8888/health || (echo 'ERROR: app.py never started'; docker logs stream; exit 1)
 
-      - name: Start tunnel and register
+      - name: Resolve and report
         env:
           CALLBACK_URL: ${{ inputs.callback_url }}
+          JOB_ID: ${{ inputs.job_id }}
+          TMDB_ID: ${{ inputs.tmdb_id }}
+          MEDIA_TYPE: ${{ inputs.media_type }}
+          SEASON: ${{ inputs.season }}
+          EPISODE: ${{ inputs.episode }}
         run: |
-          curl -sL -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
-          chmod +x cloudflared
-          nohup ./cloudflared tunnel --no-autoupdate --url http://localhost:8888 > tunnel.log 2>&1 &
-
-          TUNNEL_URL=""
-          for i in $(seq 1 60); do
-            TUNNEL_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' tunnel.log | head -1)
-            [ -n "$TUNNEL_URL" ] && break
-            sleep 1
-          done
-
-          if [ -z "$TUNNEL_URL" ]; then
-            echo "ERROR: tunnel never started"
-            cat tunnel.log
-            exit 1
+          if [ "$MEDIA_TYPE" = "movie" ]; then
+            RESULT=$(curl -s localhost:8888/stream/movie/$TMDB_ID)
+          else
+            RESULT=$(curl -s localhost:8888/stream/tv/$TMDB_ID/$SEASON/$EPISODE)
           fi
 
-          echo "tunnel: $TUNNEL_URL"
+          echo "result: $RESULT"
 
-          # verify tunnel is actually working
-          for i in $(seq 1 30); do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$TUNNEL_URL/health" 2>/dev/null || echo "000")
-            [ "$STATUS" = "200" ] && break
-            echo "tunnel not ready yet ($STATUS), waiting..."
-            sleep 3
-          done
-          echo "tunnel check done, status=$STATUS"
-
-          REGISTER=$(curl -s -X POST "$CALLBACK_URL/register" \
+          curl -s -X POST "$CALLBACK_URL/job" \
             -H "Content-Type: application/json" \
-            -d "{\"tunnel_url\": \"$TUNNEL_URL\"}")
-          echo "register response: $REGISTER"
-          RUNNER_ID=$(echo "$REGISTER" | python3 -c "import sys,json; print(json.load(sys.stdin)['runner_id'])")
-          echo "runner_id: $RUNNER_ID"
-
-          END=$((SECONDS + 6600))
-          while [ $SECONDS -lt $END ]; do
-            curl -s -X POST "$CALLBACK_URL/heartbeat" \
-              -H "Content-Type: application/json" \
-              -d "{\"runner_id\": \"$RUNNER_ID\"}" >/dev/null || true
-            sleep 30
-          done
+            -d "{\"job_id\": \"$JOB_ID\", \"result\": $RESULT}"
