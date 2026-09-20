@@ -39,6 +39,11 @@ jobs:
             sleep 1
           done
 
+      - name: Check cinejoy access
+        run: |
+          curl -s -o /tmp/cinejoy.html -w "%{http_code}" https://cinejoy.pk/watch/movie/969681
+          head -50 /tmp/cinejoy.html
+
       - name: Resolve and report
         env:
           CALLBACK_URL: ${{ inputs.callback_url }}
