@@ -62,7 +62,7 @@ jobs:
           echo "result: $RESULT"
 
           echo "=== docker logs ==="
-          docker logs stream
+          docker logs stream 2>&1 || echo "container not running"
           curl -s -X POST "$CALLBACK_URL/job" \
             -H "Content-Type: application/json" \
             -d "{\"job_id\": \"$JOB_ID\", \"result\": $RESULT}"
