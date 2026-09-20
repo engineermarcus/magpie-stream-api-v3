@@ -31,7 +31,7 @@ jobs:
         with:
           path: |
             ~/.cache/pip
-            /ms-playwright
+            ~/.cache/ms-playwright
           key: stream-deps-v1
 
       - name: Install deps
@@ -42,7 +42,7 @@ jobs:
 
       - name: Start server
         run: |
-          PLAYWRIGHT_BROWSERS_PATH=/ms-playwright python3 -u app.py &
+          python3 -u app.py &
           for i in $(seq 1 30); do
             curl -s localhost:8888/health >/dev/null && break
             sleep 1
