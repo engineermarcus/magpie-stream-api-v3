@@ -26,27 +26,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Cache pip
-        id: cache-pip
+      - name: Cache deps
+        id: cache-deps
         uses: actions/cache@v4
         with:
-          path: ~/.cache/pip
-          key: stream-pip-v1
+          path: |
+            ~/.local/lib/python3.12/site-packages
+            ~/.local/bin
+            ~/.cache/ms-playwright
+          key: stream-deps-v2
 
-      - name: Cache chromium
-        id: cache-chromium
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-chromium-v1
-
-      - name: Install pip deps
-        if: steps.cache-pip.outputs.cache-hit != 'true'
-        run: pip install playwright playwright-stealth urllib3 httpx --quiet
-
-      - name: Install chromium
-        if: steps.cache-chromium.outputs.cache-hit != 'true'
-        run: python3 -m playwright install chromium
+      - name: Install deps
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        run: |
+          pip install playwright playwright-stealth urllib3 httpx --quiet
+          python3 -m playwright install chromium
 
       - name: Install system deps
         run: python3 -m playwright install-deps chromium
