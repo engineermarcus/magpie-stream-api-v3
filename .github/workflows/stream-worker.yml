@@ -72,6 +72,6 @@ jobs:
           while [ $SECONDS -lt $END ]; do
             curl -s -X POST "$CALLBACK_URL/heartbeat" \
               -H "Content-Type: application/json" \
-              -d "{\"runner_id\": \"$RUNNER_ID\"}" >/dev/null
+              -d "{\"runner_id\": \"$RUNNER_ID\"}" >/dev/null || true
             sleep 30
           done
