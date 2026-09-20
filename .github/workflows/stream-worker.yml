@@ -26,6 +26,9 @@ jobs:
             curl -s localhost:8888/health >/dev/null && break
             sleep 1
           done
+          echo '=== docker logs ==='
+          docker logs stream
+          curl -s localhost:8888/health || (echo 'ERROR: app.py never started'; docker logs stream; exit 1)
 
       - name: Start tunnel and register
         env:
@@ -49,6 +52,14 @@ jobs:
           fi
 
           echo "tunnel: $TUNNEL_URL"
+
+          # verify tunnel is actually working
+          for i in $(seq 1 30); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$TUNNEL_URL/health")
+            [ "$STATUS" = "200" ] && break
+            echo "tunnel not ready yet ($STATUS), waiting..."
+            sleep 3
+          done
 
           REGISTER=$(curl -s -X POST "$CALLBACK_URL/register" \
             -H "Content-Type: application/json" \

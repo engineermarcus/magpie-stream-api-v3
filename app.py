@@ -139,7 +139,8 @@ async def resolve(tmdb_id: int, media_type: str, season: int = 1, episode: int =
 
     def on_request(req):
         u = req.url
-        if any(u.endswith(ext) for ext in STREAM_EXTS):
+        parsed_path = urlparse(u).path
+        if any(parsed_path.endswith(ext) for ext in STREAM_EXTS):
             print(f"  [t+{time.monotonic()-t0:.2f}s] stream intercepted: {u}")
             if u not in stream_urls:
                 stream_urls.append(u)
@@ -195,35 +196,93 @@ async def resolve(tmdb_id: int, media_type: str, season: int = 1, episode: int =
         except Exception:
             pass
 
-    wait_timeout = RESOLVE_TIMEOUT * 1.5 if media_type == "tv" else RESOLVE_TIMEOUT * 0.85
-    try:
-        await asyncio.wait_for(found.wait(), timeout=wait_timeout)
-        await page.evaluate("window.stop()")
-    except asyncio.TimeoutError:
-        pass
+
+    async def is_fake(url: str) -> bool:
+        try:
+            import httpx as _httpx
+            async with _httpx.AsyncClient(timeout=10) as c:
+                r = await c.get(url, headers={"Referer": f"{BASE}/"})
+                if r.status_code != 200:
+                    return True
+                for line in r.text.splitlines():
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        if any(line.endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".webp")):
+                            return True
+                return False
+        except Exception:
+            return True
+
+    server_selectors = [
+        '[class*="server"]',
+        '[class*="Server"]',
+        '[class*="source"]',
+        '[class*="Source"]',
+        'ul[class*="list"] li',
+        '[class*="provider"] li',
+        '[class*="btn-server"]',
+    ]
+
+    best = None
+    tried_urls = set()
+    max_attempts = 5
+
+    for attempt in range(max_attempts):
+        candidate = next((u for u in reversed(stream_urls) if u not in tried_urls), None)
+        if not candidate:
+            found.clear()
+            wait_timeout = RESOLVE_TIMEOUT * 1.5 if media_type == "tv" else RESOLVE_TIMEOUT * 0.85
+            try:
+                await asyncio.wait_for(found.wait(), timeout=wait_timeout)
+            except asyncio.TimeoutError:
+                break
+            candidate = next((u for u in reversed(stream_urls) if u not in tried_urls), None)
+        if not candidate:
+            break
+        tried_urls.add(candidate)
+
+        print(f"  [attempt {attempt+1}] validating: {candidate}")
+        if not await is_fake(candidate):
+            best = candidate
+            print(f"  [attempt {attempt+1}] real stream found")
+            break
+
+        print(f"  [attempt {attempt+1}] fake stream, trying next server...")
+
+        switched = False
+        for sel in server_selectors:
+            try:
+                els = await page.query_selector_all(sel)
+                for el in els:
+                    if await el.is_visible():
+                        await el.click(timeout=2000)
+                        switched = True
+                        await asyncio.sleep(2)
+                        break
+                if switched:
+                    break
+            except Exception:
+                pass
+
+        if not switched:
+            break
+
+    await page.evaluate("window.stop()")
     await context.close()
 
-    if not stream_urls:
+    if not best:
         return {"error": "no stream found"}
-
-    def score(u):
-        if "playlist" in u:                          return 0
-        if "video_" not in u and "audio_" not in u:  return 1
-        return 2
-
-    best = sorted(stream_urls, key=score)[0]
 
     result = {
         "status":  "ok",
         "raw_url": best,
-        "all":     stream_urls,
+        "all":     list(tried_urls),
         "referer": f"{BASE}/",
         "type":    media_type,
         "tmdb":    tmdb_id,
         **({"season": season, "episode": episode} if media_type == "tv" else {}),
     }
     cache_set(ck, result)
-
     return result
     
 def run_resolve(tmdb_id, media_type, season=1, episode=1, client_ip=None):
