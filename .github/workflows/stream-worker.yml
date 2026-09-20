@@ -22,33 +22,31 @@ jobs:
   stream:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    permissions:
-      packages: read
     steps:
-      - name: Login to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Cache Docker image
-        uses: ScribeMD/docker-cache@0.5.0
+      - name: Cache deps
+        uses: actions/cache@v4
         with:
-          key: docker-${{ runner.os }}-stream-latest
-        continue-on-error: true
+          path: |
+            ~/.cache/pip
+            /ms-playwright
+          key: stream-deps-v1
 
-      - name: Pull and start server
+      - name: Install deps
         run: |
-          docker pull ghcr.io/${{ github.repository_owner }}/stream:latest
-          docker run -d --name stream --shm-size=1g -p 8888:8888 \
-            ghcr.io/${{ github.repository_owner }}/stream:latest
+          pip install playwright playwright-stealth urllib3 httpx --quiet
+          python3 -m playwright install chromium
+          python3 -m playwright install-deps chromium
 
+      - name: Start server
+        run: |
+          PLAYWRIGHT_BROWSERS_PATH=/ms-playwright python3 -u app.py &
           for i in $(seq 1 30); do
             curl -s localhost:8888/health >/dev/null && break
             sleep 1
           done
-
-      - name: Check cinejoy access
-        run: |
-          curl -s -o /tmp/cinejoy.html -w "%{http_code}" https://cinejoy.pk/watch/movie/969681
-          head -50 /tmp/cinejoy.html
 
       - name: Resolve and report
         env:
@@ -67,8 +65,6 @@ jobs:
 
           echo "result: $RESULT"
 
-          echo "=== docker logs ==="
-          docker logs stream 2>&1 || echo "container not running"
           curl -s -X POST "$CALLBACK_URL/job" \
             -H "Content-Type: application/json" \
             -d "{\"job_id\": \"$JOB_ID\", \"result\": $RESULT}"
