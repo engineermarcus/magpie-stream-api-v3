@@ -38,7 +38,7 @@ except ImportError:
 
 BASE            = "https://cinejoy.pk"
 STREAM_EXTS     = (".m3u8", ".mp4", ".mpd")
-RESOLVE_TIMEOUT = 35   # seconds
+RESOLVE_TIMEOUT = 60   # seconds
 
 # Resources to block — saves 4–6s of page load time
 BLOCKED_TYPES = {
