@@ -27,6 +27,8 @@ jobs:
             sleep 1
           done
           echo '=== docker logs ==='
+          echo '=== timing stream resolve ==='
+          time curl -s localhost:8888/stream/movie/969681 | python3 -m json.tool
           docker logs stream
           curl -s localhost:8888/health || (echo 'ERROR: app.py never started'; docker logs stream; exit 1)
 
